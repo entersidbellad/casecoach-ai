@@ -6,11 +6,16 @@ let _client = null;
 export function getDb() {
     if (_client) return _client;
 
-    const url = process.env.TURSO_DATABASE_URL;
+    let url = process.env.TURSO_DATABASE_URL;
     const authToken = process.env.TURSO_AUTH_TOKEN;
 
     if (!url) {
-        throw new Error('TURSO_DATABASE_URL environment variable is not set. Please configure it in your Vercel project settings.');
+        throw new Error('TURSO_DATABASE_URL environment variable is not set.');
+    }
+
+    // Convert libsql:// to https:// for Vercel compatibility
+    if (url.startsWith('libsql://')) {
+        url = url.replace('libsql://', 'https://');
     }
 
     _client = createClient({ url, authToken });
