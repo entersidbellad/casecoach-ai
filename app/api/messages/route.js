@@ -11,7 +11,7 @@ export async function GET(request) {
             return NextResponse.json({ error: 'session_id is required' }, { status: 400 });
         }
 
-        const messages = getMessagesBySession(session_id);
+        const messages = await getMessagesBySession(session_id);
         return NextResponse.json({ messages });
     } catch (err) {
         console.error('Messages API error:', err);

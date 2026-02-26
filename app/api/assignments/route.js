@@ -4,9 +4,11 @@ import {
     createAssignment,
     getAssignmentsByProfessor,
     getAssignmentById,
-    getAllCases
+    getAllCases,
+    getCaseById,
+    getUsersByRole,
+    ensureDb
 } from '@/app/lib/db';
-import * as dbModule from '@/app/lib/db';
 
 // GET — list assignments for professor or get single assignment
 export async function GET(request) {
@@ -15,20 +17,20 @@ export async function GET(request) {
         const id = searchParams.get('id');
 
         if (id) {
-            const assignment = getAssignmentById(id);
+            const assignment = await getAssignmentById(id);
             if (!assignment) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-            const caseData = assignment.case_id ? dbModule.getCaseById(assignment.case_id) : null;
+            const caseData = assignment.case_id ? await getCaseById(assignment.case_id) : null;
             return NextResponse.json({ assignment, case: caseData });
         }
 
         // List all — we need to find the professor
-        const professors = dbModule.getUsersByRole('professor');
+        const professors = await getUsersByRole('professor');
         if (professors.length === 0) {
             return NextResponse.json({ assignments: [], cases: [] });
         }
         const prof = professors[0];
-        const assignments = getAssignmentsByProfessor(prof.id);
-        const cases = getAllCases();
+        const assignments = await getAssignmentsByProfessor(prof.id);
+        const cases = await getAllCases();
         return NextResponse.json({ assignments, cases });
     } catch (err) {
         return NextResponse.json({ error: err.message }, { status: 500 });
@@ -46,18 +48,18 @@ export async function POST(request) {
         }
 
         // Verify case exists
-        const caseData = dbModule.getCaseById(case_id);
+        const caseData = await getCaseById(case_id);
         if (!caseData) {
             return NextResponse.json({ error: 'Case not found' }, { status: 404 });
         }
 
         // Get professor (first one for MVP)
-        const professors = dbModule.getUsersByRole('professor');
+        const professors = await getUsersByRole('professor');
         if (professors.length === 0) {
             return NextResponse.json({ error: 'No professor found. Seed demo data first.' }, { status: 400 });
         }
 
-        const result = createAssignment({
+        const result = await createAssignment({
             case_id,
             title: title.trim(),
             credits: credits || 25,
@@ -81,12 +83,10 @@ export async function PUT(request) {
 
         if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-        const db = (await import('@/app/lib/db')).default;
-        // Use raw query for flexibility
-        const assignment = getAssignmentById(id);
+        const assignment = await getAssignmentById(id);
         if (!assignment) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-        // Build update dynamically
+        const db = await ensureDb();
         const updates = [];
         const values = [];
         if (active !== undefined) { updates.push('active = ?'); values.push(active ? 1 : 0); }
@@ -94,9 +94,10 @@ export async function PUT(request) {
 
         if (updates.length > 0) {
             values.push(id);
-            // We need to access the raw db for custom queries
-            const { getDb } = await import('@/app/lib/db');
-            // Since getDb isn't exported, use a simpler approach
+            await db.execute({
+                sql: `UPDATE assignments SET ${updates.join(', ')} WHERE id = ?`,
+                args: values
+            });
         }
 
         return NextResponse.json({ success: true });

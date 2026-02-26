@@ -4,11 +4,11 @@ import { seedDemoData, getUsersByRole, getAssignmentsByProfessor } from '@/app/l
 
 export async function POST() {
     try {
-        seedDemoData();
+        await seedDemoData();
 
-        const professors = getUsersByRole('professor');
+        const professors = await getUsersByRole('professor');
         const prof = professors[0];
-        const assignments = prof ? getAssignmentsByProfessor(prof.id) : [];
+        const assignments = prof ? await getAssignmentsByProfessor(prof.id) : [];
 
         return NextResponse.json({
             message: 'Demo data seeded successfully',

@@ -17,9 +17,9 @@ import {
     getAssignmentById,
     getActiveDirectives,
     getAgentOverrides,
-    getMessagesBySession
+    getMessagesBySession,
+    getCaseById
 } from '@/app/lib/db';
-import * as dbModule from '@/app/lib/db';
 
 export async function POST(request) {
     try {
@@ -34,12 +34,12 @@ export async function POST(request) {
         }
 
         // Get session and check credits
-        const session = getSessionById(session_id);
+        const session = await getSessionById(session_id);
         if (!session) {
             return NextResponse.json({ error: 'Invalid session' }, { status: 404 });
         }
 
-        const creditsRemaining = getCreditsRemaining(session_id);
+        const creditsRemaining = await getCreditsRemaining(session_id);
         if (creditsRemaining <= 0) {
             return NextResponse.json({
                 error: 'No credits remaining',
@@ -49,17 +49,17 @@ export async function POST(request) {
         }
 
         // Get assignment, case, directives, and overrides
-        const assignment = getAssignmentById(session.assignment_id);
+        const assignment = await getAssignmentById(session.assignment_id);
         if (!assignment) {
             return NextResponse.json({ error: 'Assignment not found' }, { status: 404 });
         }
 
-        const caseData = dbModule.getCaseById(assignment.case_id);
-        const directives = getActiveDirectives(assignment.id);
-        const agentOverrides = caseData ? getAgentOverrides(caseData.id) : [];
+        const caseData = await getCaseById(assignment.case_id);
+        const directives = await getActiveDirectives(assignment.id);
+        const agentOverrides = caseData ? await getAgentOverrides(caseData.id) : [];
 
         // Save student message
-        saveMessage({
+        await saveMessage({
             session_id,
             role: 'student',
             content: message.trim()
@@ -74,18 +74,18 @@ export async function POST(request) {
                 agent_responses: [],
                 credits_remaining: creditsRemaining - 1
             };
-            saveMessage({
+            await saveMessage({
                 session_id,
                 role: 'system',
                 content: phiResponse.content,
                 phase: 'safety'
             });
-            incrementCredits(session_id);
+            await incrementCredits(session_id);
             return NextResponse.json(phiResponse);
         }
 
         // --- Determine coaching phase ---
-        const existingMessages = getMessagesBySession(session_id);
+        const existingMessages = await getMessagesBySession(session_id);
         const currentPhase = determinePhase(existingMessages);
 
         // Phase 1: CLARIFY — Check if student has formed reasoning
@@ -103,13 +103,13 @@ export async function POST(request) {
                     credits_remaining: creditsRemaining - 1,
                     coaching_hint: 'Start with "I recommend..." or "I think we should..." and include at least one reason why.'
                 };
-                saveMessage({
+                await saveMessage({
                     session_id,
                     role: 'system',
                     content: response.content,
                     phase: 'clarify'
                 });
-                incrementCredits(session_id);
+                await incrementCredits(session_id);
                 return NextResponse.json(response);
             }
 
@@ -144,13 +144,13 @@ export async function POST(request) {
                     credits_remaining: creditsRemaining - 1,
                     coaching_hint: 'Strengthen the areas marked "Weak" or "Developing" in the rubric above.'
                 };
-                saveMessage({
+                await saveMessage({
                     session_id,
                     role: 'system',
                     content: response.content,
                     phase: 'critique'
                 });
-                incrementCredits(session_id);
+                await incrementCredits(session_id);
                 return NextResponse.json(response);
             }
 
@@ -166,7 +166,7 @@ export async function POST(request) {
         });
 
         // Save system response with full trace
-        saveMessage({
+        await saveMessage({
             session_id,
             role: 'system',
             content: result.final_summary,
@@ -181,7 +181,7 @@ export async function POST(request) {
             phase: 'direction'
         });
 
-        incrementCredits(session_id);
+        await incrementCredits(session_id);
 
         return NextResponse.json({
             phase: 'direction',

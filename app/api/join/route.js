@@ -14,18 +14,18 @@ export async function POST(request) {
             return NextResponse.json({ error: 'Student name is required' }, { status: 400 });
         }
 
-        const assignment = getAssignmentByJoinCode(join_code.trim().toUpperCase());
+        const assignment = await getAssignmentByJoinCode(join_code.trim().toUpperCase());
         if (!assignment) {
             return NextResponse.json({ error: 'Invalid join code. Please check and try again.' }, { status: 404 });
         }
 
         // Create student user and session
-        const student = createUser({
+        const student = await createUser({
             name: student_name.trim(),
             role: 'student'
         });
 
-        const session = createSession({
+        const session = await createSession({
             user_id: student.id,
             assignment_id: assignment.id
         });

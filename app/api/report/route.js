@@ -1,7 +1,6 @@
 // POST /api/report — Generate a structured report scaffold from conversation history
 import { NextResponse } from 'next/server';
-import { getSessionById, getMessagesBySession, getAssignmentById, getCreditsRemaining } from '@/app/lib/db';
-import * as dbModule from '@/app/lib/db';
+import { getSessionById, getMessagesBySession, getAssignmentById, getCreditsRemaining, getCaseById } from '@/app/lib/db';
 import { callLLM } from '@/app/lib/agents/llm';
 
 export async function POST(request) {
@@ -12,14 +11,14 @@ export async function POST(request) {
             return NextResponse.json({ error: 'session_id is required' }, { status: 400 });
         }
 
-        const session = getSessionById(session_id);
+        const session = await getSessionById(session_id);
         if (!session) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
-        const assignment = getAssignmentById(session.assignment_id);
-        const caseData = assignment ? dbModule.getCaseById(assignment.case_id) : null;
-        const messages = getMessagesBySession(session_id);
+        const assignment = await getAssignmentById(session.assignment_id);
+        const caseData = assignment ? await getCaseById(assignment.case_id) : null;
+        const messages = await getMessagesBySession(session_id);
 
         // Extract conversation context
         const studentMessages = messages.filter(m => m.role === 'student').map(m => m.content);
@@ -83,7 +82,7 @@ Generate the structured report.`;
                 case_title: caseData?.title || 'Unknown',
                 student_turns: studentMessages.length,
                 agent_insights: agentInsights.length,
-                credits_remaining: getCreditsRemaining(session_id),
+                credits_remaining: await getCreditsRemaining(session_id),
                 generated_at: new Date().toISOString()
             }
         });

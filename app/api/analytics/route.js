@@ -1,50 +1,55 @@
 // /api/analytics — Professor analytics for coaching performance
 import { NextResponse } from 'next/server';
-import { getDb } from '@/app/lib/db';
+import { ensureDb } from '@/app/lib/db';
 
 export async function GET(request) {
     try {
         const { searchParams } = new URL(request.url);
         const assignmentId = searchParams.get('assignment_id');
-        const db = getDb();
+        const db = await ensureDb();
 
         // Overall stats
-        const totalSessions = db.prepare('SELECT COUNT(*) as count FROM sessions').get().count;
-        const totalMessages = db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
-        const totalStudentMsgs = db.prepare("SELECT COUNT(*) as count FROM messages WHERE role = 'student'").get().count;
+        const totalSessionsResult = await db.execute('SELECT COUNT(*) as count FROM sessions');
+        const totalSessions = totalSessionsResult.rows[0]?.count || 0;
 
-        // Phase distribution — how many messages in each phase
-        const phaseDistribution = db.prepare(`
+        const totalMessagesResult = await db.execute('SELECT COUNT(*) as count FROM messages');
+        const totalMessages = totalMessagesResult.rows[0]?.count || 0;
+
+        const totalStudentMsgsResult = await db.execute("SELECT COUNT(*) as count FROM messages WHERE role = 'student'");
+        const totalStudentMsgs = totalStudentMsgsResult.rows[0]?.count || 0;
+
+        // Phase distribution
+        const phaseResult = await db.execute(`
       SELECT phase, COUNT(*) as count 
       FROM messages 
       WHERE role = 'system' AND phase IS NOT NULL
       GROUP BY phase
-    `).all();
+    `);
+        const phaseDistribution = phaseResult.rows;
 
-        // Average turns to reach direction phase per session
-        const sessionsWithDirection = db.prepare(`
+        // Sessions reaching direction phase
+        const directionResult = await db.execute(`
       SELECT session_id, MIN(rowid) as first_direction_row
       FROM messages 
       WHERE phase = 'direction' AND role = 'system'
       GROUP BY session_id
-    `).all();
+    `);
+        const sessionsWithDirection = directionResult.rows;
 
-        // Rubric scores — parse from message content/agent_trace
-        const rubricMessages = db.prepare(`
+        // Rubric scores from critique messages
+        const rubricResult = await db.execute(`
       SELECT content, agent_trace, session_id
       FROM messages 
       WHERE role = 'system' AND phase = 'critique'
       ORDER BY created_at DESC
       LIMIT 100
-    `).all();
+    `);
 
-        // Parse rubric scores from the critique messages
         const rubricScores = { problem_framing: [], evidence_use: [], tradeoff_quality: [], risk_compliance: [] };
         const scoreMap = { weak: 1, developing: 2, adequate: 3, strong: 4 };
 
-        for (const msg of rubricMessages) {
+        for (const msg of rubricResult.rows) {
             const content = msg.content || '';
-            // Extract rubric scores from the formatted response
             for (const dim of Object.keys(rubricScores)) {
                 const patterns = {
                     problem_framing: /problem\s*framing\*?\*?:\s*(weak|developing|adequate|strong)/i,
@@ -83,20 +88,38 @@ export async function GET(request) {
             .sort((a, b) => b.weakPercent - a.weakPercent);
 
         // Per-session performance
-        const sessionStats = db.prepare(`
-      SELECT 
-        s.id as session_id,
-        u.name as student_name,
-        s.credits_used,
-        COUNT(m.id) as message_count,
-        s.created_at
-      FROM sessions s
-      LEFT JOIN users u ON s.user_id = u.id
-      LEFT JOIN messages m ON m.session_id = s.id
-      ${assignmentId ? 'WHERE s.assignment_id = ?' : ''}
-      GROUP BY s.id
-      ORDER BY s.created_at DESC
-    `).all(...(assignmentId ? [assignmentId] : []));
+        let sessionStatsResult;
+        if (assignmentId) {
+            sessionStatsResult = await db.execute({
+                sql: `SELECT 
+                    s.id as session_id,
+                    u.name as student_name,
+                    s.credits_used,
+                    COUNT(m.id) as message_count,
+                    s.created_at
+                  FROM sessions s
+                  LEFT JOIN users u ON s.user_id = u.id
+                  LEFT JOIN messages m ON m.session_id = s.id
+                  WHERE s.assignment_id = ?
+                  GROUP BY s.id
+                  ORDER BY s.created_at DESC`,
+                args: [assignmentId]
+            });
+        } else {
+            sessionStatsResult = await db.execute(`
+              SELECT 
+                s.id as session_id,
+                u.name as student_name,
+                s.credits_used,
+                COUNT(m.id) as message_count,
+                s.created_at
+              FROM sessions s
+              LEFT JOIN users u ON s.user_id = u.id
+              LEFT JOIN messages m ON m.session_id = s.id
+              GROUP BY s.id
+              ORDER BY s.created_at DESC
+            `);
+        }
 
         return NextResponse.json({
             overview: {
@@ -108,7 +131,7 @@ export async function GET(request) {
             phase_distribution: phaseDistribution,
             rubric_averages: rubricAverages,
             weak_areas: weakAreas,
-            session_stats: sessionStats
+            session_stats: sessionStatsResult.rows
         });
     } catch (err) {
         return NextResponse.json({ error: err.message }, { status: 500 });

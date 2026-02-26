@@ -16,15 +16,15 @@ export async function GET(request) {
         const id = searchParams.get('id');
 
         if (id) {
-            const caseData = getCaseById(id);
+            const caseData = await getCaseById(id);
             if (!caseData) {
                 return NextResponse.json({ error: 'Case not found' }, { status: 404 });
             }
-            const overrides = getAgentOverrides(id);
+            const overrides = await getAgentOverrides(id);
             return NextResponse.json({ case: caseData, overrides });
         }
 
-        const cases = getAllCases();
+        const cases = await getAllCases();
         return NextResponse.json({ cases });
     } catch (err) {
         return NextResponse.json({ error: err.message }, { status: 500 });
@@ -40,12 +40,12 @@ export async function PUT(request) {
             return NextResponse.json({ error: 'Case id is required' }, { status: 400 });
         }
 
-        const existing = getCaseById(id);
+        const existing = await getCaseById(id);
         if (!existing) {
             return NextResponse.json({ error: 'Case not found' }, { status: 404 });
         }
 
-        updateCase(id, {
+        await updateCase(id, {
             title: title || existing.title,
             pdf_text: pdf_text !== undefined ? pdf_text : existing.pdf_text,
             kpis: kpis || existing.kpis,
@@ -55,11 +55,11 @@ export async function PUT(request) {
 
         // Handle agent overrides
         if (agent_overrides && Array.isArray(agent_overrides)) {
-            const professors = getUsersByRole('professor');
+            const professors = await getUsersByRole('professor');
             const prof = professors[0];
             for (const override of agent_overrides) {
                 if (override.agent_name && override.prompt_addition !== undefined) {
-                    setAgentOverride({
+                    await setAgentOverride({
                         case_id: id,
                         agent_name: override.agent_name,
                         prompt_addition: override.prompt_addition,

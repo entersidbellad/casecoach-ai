@@ -16,7 +16,7 @@ export async function GET(request) {
             return NextResponse.json({ error: 'assignment_id is required' }, { status: 400 });
         }
 
-        const directives = getActiveDirectives(assignment_id);
+        const directives = await getActiveDirectives(assignment_id);
         return NextResponse.json({ directives });
     } catch (err) {
         return NextResponse.json({ error: err.message }, { status: 500 });
@@ -32,10 +32,10 @@ export async function POST(request) {
             return NextResponse.json({ error: 'assignment_id and content are required' }, { status: 400 });
         }
 
-        const professors = getUsersByRole('professor');
+        const professors = await getUsersByRole('professor');
         const prof = professors[0];
 
-        const directive = createDirective({
+        const directive = await createDirective({
             assignment_id,
             content: content.trim(),
             created_by: prof?.id
@@ -56,7 +56,7 @@ export async function DELETE(request) {
             return NextResponse.json({ error: 'id is required' }, { status: 400 });
         }
 
-        deactivateDirective(id);
+        await deactivateDirective(id);
         return NextResponse.json({ success: true });
     } catch (err) {
         return NextResponse.json({ error: err.message }, { status: 500 });

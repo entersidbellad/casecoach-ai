@@ -1,25 +1,23 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { createClient } from '@libsql/client';
 import { v4 as uuidv4 } from 'uuid';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'fccp.db');
-
-let _db = null;
+let _client = null;
 
 export function getDb() {
-    if (_db) return _db;
+    if (_client) return _client;
 
-    // Ensure data directory exists
-    const fs = require('fs');
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    _client = createClient({
+        url: process.env.TURSO_DATABASE_URL || 'file:data/local.db',
+        authToken: process.env.TURSO_AUTH_TOKEN
+    });
 
-    _db = new Database(DB_PATH);
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
+    return _client;
+}
 
-    // Create tables
-    _db.exec(`
+// Initialize tables
+export async function initDb() {
+    const db = getDb();
+    await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id          TEXT PRIMARY KEY,
       name        TEXT NOT NULL,
@@ -85,41 +83,58 @@ export function getDb() {
       created_by    TEXT REFERENCES users(id)
     );
   `);
+}
 
-    return _db;
+// Ensure DB is initialized (called once per cold start)
+let _initPromise = null;
+export async function ensureDb() {
+    if (!_initPromise) {
+        _initPromise = initDb();
+    }
+    await _initPromise;
+    return getDb();
 }
 
 // --- User helpers ---
 
-export function createUser({ name, email, role }) {
-    const db = getDb();
+export async function createUser({ name, email, role }) {
+    const db = await ensureDb();
     const id = uuidv4();
-    db.prepare('INSERT INTO users (id, name, email, role) VALUES (?, ?, ?, ?)')
-        .run(id, name, email || null, role);
+    await db.execute({
+        sql: 'INSERT INTO users (id, name, email, role) VALUES (?, ?, ?, ?)',
+        args: [id, name, email || null, role]
+    });
     return { id, name, email, role };
 }
 
-export function getUserById(id) {
-    return getDb().prepare('SELECT * FROM users WHERE id = ?').get(id);
+export async function getUserById(id) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM users WHERE id = ?', args: [id] });
+    return result.rows[0] || null;
 }
 
-export function getUsersByRole(role) {
-    return getDb().prepare('SELECT * FROM users WHERE role = ?').all(role);
+export async function getUsersByRole(role) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM users WHERE role = ?', args: [role] });
+    return result.rows;
 }
 
 // --- Case helpers ---
 
-export function createCase({ title, pdf_text, kpis, red_lines, goals, created_by }) {
-    const db = getDb();
+export async function createCase({ title, pdf_text, kpis, red_lines, goals, created_by }) {
+    const db = await ensureDb();
     const id = uuidv4();
-    db.prepare(
-        'INSERT INTO cases (id, title, pdf_text, kpis, red_lines, goals, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(id, title, pdf_text || null, JSON.stringify(kpis || {}), JSON.stringify(red_lines || []), JSON.stringify(goals || {}), created_by);
+    await db.execute({
+        sql: 'INSERT INTO cases (id, title, pdf_text, kpis, red_lines, goals, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        args: [id, title, pdf_text || null, JSON.stringify(kpis || {}), JSON.stringify(red_lines || []), JSON.stringify(goals || {}), created_by]
+    });
     return { id, title };
 }
 
-export function getCaseById(id) {
-    const row = getDb().prepare('SELECT * FROM cases WHERE id = ?').get(id);
+export async function getCaseById(id) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM cases WHERE id = ?', args: [id] });
+    const row = result.rows[0];
     if (!row) return null;
     return {
         ...row,
@@ -129,157 +144,210 @@ export function getCaseById(id) {
     };
 }
 
-export function getAllCases() {
-    return getDb().prepare('SELECT id, title, created_at FROM cases ORDER BY created_at DESC').all();
+export async function getAllCases() {
+    const db = await ensureDb();
+    const result = await db.execute('SELECT id, title, created_at FROM cases ORDER BY created_at DESC');
+    return result.rows;
 }
 
-export function updateCase(id, updates = {}) {
-    const db = getDb();
-    const existing = getCaseById(id);
+export async function updateCase(id, updates = {}) {
+    const db = await ensureDb();
+    const existing = await getCaseById(id);
     if (!existing) return;
     const title = updates.title !== undefined ? updates.title : existing.title;
     const pdf_text = updates.pdf_text !== undefined ? updates.pdf_text : existing.pdf_text;
     const kpis = updates.kpis !== undefined ? updates.kpis : existing.kpis;
     const red_lines = updates.red_lines !== undefined ? updates.red_lines : existing.red_lines;
     const goals = updates.goals !== undefined ? updates.goals : existing.goals;
-    db.prepare(
-        'UPDATE cases SET title = ?, pdf_text = ?, kpis = ?, red_lines = ?, goals = ? WHERE id = ?'
-    ).run(title, pdf_text, JSON.stringify(kpis || {}), JSON.stringify(red_lines || []), JSON.stringify(goals || {}), id);
+    await db.execute({
+        sql: 'UPDATE cases SET title = ?, pdf_text = ?, kpis = ?, red_lines = ?, goals = ? WHERE id = ?',
+        args: [title, pdf_text, JSON.stringify(kpis || {}), JSON.stringify(red_lines || []), JSON.stringify(goals || {}), id]
+    });
 }
 
 // --- Assignment helpers ---
 
-export function createAssignment({ case_id, title, credits, created_by }) {
-    const db = getDb();
+export async function createAssignment({ case_id, title, credits, created_by }) {
+    const db = await ensureDb();
     const id = uuidv4();
     const join_code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    db.prepare(
-        'INSERT INTO assignments (id, case_id, title, join_code, credits, created_by) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, case_id, title, join_code, credits || 25, created_by);
+    await db.execute({
+        sql: 'INSERT INTO assignments (id, case_id, title, join_code, credits, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [id, case_id, title, join_code, credits || 25, created_by]
+    });
     return { id, join_code, title };
 }
 
-export function getAssignmentByJoinCode(code) {
-    const row = getDb().prepare('SELECT * FROM assignments WHERE join_code = ? AND active = 1').get(code);
-    return row || null;
+export async function getAssignmentByJoinCode(code) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM assignments WHERE join_code = ? AND active = 1', args: [code] });
+    return result.rows[0] || null;
 }
 
-export function getAssignmentById(id) {
-    return getDb().prepare('SELECT * FROM assignments WHERE id = ?').get(id) || null;
+export async function getAssignmentById(id) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM assignments WHERE id = ?', args: [id] });
+    return result.rows[0] || null;
 }
 
-export function getAssignmentsByProfessor(professorId) {
-    return getDb().prepare(
-        'SELECT a.*, c.title as case_title FROM assignments a LEFT JOIN cases c ON a.case_id = c.id WHERE a.created_by = ? ORDER BY a.created_at DESC'
-    ).all(professorId);
+export async function getAssignmentsByProfessor(professorId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: 'SELECT a.*, c.title as case_title FROM assignments a LEFT JOIN cases c ON a.case_id = c.id WHERE a.created_by = ? ORDER BY a.created_at DESC',
+        args: [professorId]
+    });
+    return result.rows;
 }
 
 // --- Session helpers ---
 
-export function createSession({ user_id, assignment_id }) {
-    const db = getDb();
+export async function createSession({ user_id, assignment_id }) {
+    const db = await ensureDb();
     const id = uuidv4();
-    db.prepare('INSERT INTO sessions (id, user_id, assignment_id) VALUES (?, ?, ?)').run(id, user_id, assignment_id);
+    await db.execute({
+        sql: 'INSERT INTO sessions (id, user_id, assignment_id) VALUES (?, ?, ?)',
+        args: [id, user_id, assignment_id]
+    });
     return { id, user_id, assignment_id, credits_used: 0 };
 }
 
-export function getSessionById(id) {
-    return getDb().prepare('SELECT * FROM sessions WHERE id = ?').get(id) || null;
+export async function getSessionById(id) {
+    const db = await ensureDb();
+    const result = await db.execute({ sql: 'SELECT * FROM sessions WHERE id = ?', args: [id] });
+    return result.rows[0] || null;
 }
 
-export function getSessionsByAssignment(assignmentId) {
-    return getDb().prepare(
-        'SELECT s.*, u.name as student_name FROM sessions s LEFT JOIN users u ON s.user_id = u.id WHERE s.assignment_id = ? ORDER BY s.created_at DESC'
-    ).all(assignmentId);
+export async function getSessionsByAssignment(assignmentId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: 'SELECT s.*, u.name as student_name FROM sessions s LEFT JOIN users u ON s.user_id = u.id WHERE s.assignment_id = ? ORDER BY s.created_at DESC',
+        args: [assignmentId]
+    });
+    return result.rows;
 }
 
-export function incrementCredits(sessionId) {
-    getDb().prepare('UPDATE sessions SET credits_used = credits_used + 1 WHERE id = ?').run(sessionId);
+export async function incrementCredits(sessionId) {
+    const db = await ensureDb();
+    await db.execute({
+        sql: 'UPDATE sessions SET credits_used = credits_used + 1 WHERE id = ?',
+        args: [sessionId]
+    });
 }
 
-export function getCreditsRemaining(sessionId) {
-    const session = getSessionById(sessionId);
+export async function getCreditsRemaining(sessionId) {
+    const session = await getSessionById(sessionId);
     if (!session) return 0;
-    const assignment = getAssignmentById(session.assignment_id);
+    const assignment = await getAssignmentById(session.assignment_id);
     if (!assignment) return 0;
     return Math.max(0, assignment.credits - session.credits_used);
 }
 
 // --- Message helpers ---
 
-export function saveMessage({ session_id, role, content, agent_trace, phase }) {
-    const db = getDb();
+export async function saveMessage({ session_id, role, content, agent_trace, phase }) {
+    const db = await ensureDb();
     const id = uuidv4();
-    db.prepare(
-        'INSERT INTO messages (id, session_id, role, content, agent_trace, phase) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, session_id, role, content, agent_trace ? JSON.stringify(agent_trace) : null, phase || null);
+    await db.execute({
+        sql: 'INSERT INTO messages (id, session_id, role, content, agent_trace, phase) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [id, session_id, role, content, agent_trace ? JSON.stringify(agent_trace) : null, phase || null]
+    });
     return { id };
 }
 
-export function getMessagesBySession(sessionId) {
-    const rows = getDb().prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC').all(sessionId);
-    return rows.map(r => ({
+export async function getMessagesBySession(sessionId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: 'SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+        args: [sessionId]
+    });
+    return result.rows.map(r => ({
         ...r,
         agent_trace: r.agent_trace ? JSON.parse(r.agent_trace) : null
     }));
 }
 
-export function getMessagesByAssignment(assignmentId) {
-    return getDb().prepare(`
-    SELECT m.*, s.user_id, u.name as student_name
-    FROM messages m
-    JOIN sessions s ON m.session_id = s.id
-    LEFT JOIN users u ON s.user_id = u.id
-    WHERE s.assignment_id = ?
-    ORDER BY m.created_at DESC
-  `).all(assignmentId);
+export async function getMessagesByAssignment(assignmentId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: `SELECT m.*, s.user_id, u.name as student_name
+              FROM messages m
+              JOIN sessions s ON m.session_id = s.id
+              LEFT JOIN users u ON s.user_id = u.id
+              WHERE s.assignment_id = ?
+              ORDER BY m.created_at DESC`,
+        args: [assignmentId]
+    });
+    return result.rows;
 }
 
 // --- Directive helpers ---
 
-export function createDirective({ assignment_id, content, created_by }) {
-    const db = getDb();
+export async function createDirective({ assignment_id, content, created_by }) {
+    const db = await ensureDb();
     const id = uuidv4();
-    db.prepare('INSERT INTO directives (id, assignment_id, content, created_by) VALUES (?, ?, ?, ?)').run(id, assignment_id, content, created_by);
+    await db.execute({
+        sql: 'INSERT INTO directives (id, assignment_id, content, created_by) VALUES (?, ?, ?, ?)',
+        args: [id, assignment_id, content, created_by]
+    });
     return { id, content };
 }
 
-export function getActiveDirectives(assignmentId) {
-    return getDb().prepare('SELECT * FROM directives WHERE assignment_id = ? AND active = 1 ORDER BY created_at DESC').all(assignmentId);
+export async function getActiveDirectives(assignmentId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: 'SELECT * FROM directives WHERE assignment_id = ? AND active = 1 ORDER BY created_at DESC',
+        args: [assignmentId]
+    });
+    return result.rows;
 }
 
-export function deactivateDirective(id) {
-    getDb().prepare('UPDATE directives SET active = 0 WHERE id = ?').run(id);
+export async function deactivateDirective(id) {
+    const db = await ensureDb();
+    await db.execute({ sql: 'UPDATE directives SET active = 0 WHERE id = ?', args: [id] });
 }
 
 // --- Agent Override helpers ---
 
-export function setAgentOverride({ case_id, agent_name, prompt_addition, created_by }) {
-    const db = getDb();
-    const existing = db.prepare('SELECT id FROM agent_overrides WHERE case_id = ? AND agent_name = ?').get(case_id, agent_name);
-    if (existing) {
-        db.prepare('UPDATE agent_overrides SET prompt_addition = ? WHERE id = ?').run(prompt_addition, existing.id);
-        return existing;
+export async function setAgentOverride({ case_id, agent_name, prompt_addition, created_by }) {
+    const db = await ensureDb();
+    const existing = await db.execute({
+        sql: 'SELECT id FROM agent_overrides WHERE case_id = ? AND agent_name = ?',
+        args: [case_id, agent_name]
+    });
+    if (existing.rows[0]) {
+        await db.execute({
+            sql: 'UPDATE agent_overrides SET prompt_addition = ? WHERE id = ?',
+            args: [prompt_addition, existing.rows[0].id]
+        });
+        return existing.rows[0];
     }
     const id = uuidv4();
-    db.prepare('INSERT INTO agent_overrides (id, case_id, agent_name, prompt_addition, created_by) VALUES (?, ?, ?, ?, ?)').run(id, case_id, agent_name, prompt_addition, created_by);
+    await db.execute({
+        sql: 'INSERT INTO agent_overrides (id, case_id, agent_name, prompt_addition, created_by) VALUES (?, ?, ?, ?, ?)',
+        args: [id, case_id, agent_name, prompt_addition, created_by]
+    });
     return { id };
 }
 
-export function getAgentOverrides(caseId) {
-    return getDb().prepare('SELECT * FROM agent_overrides WHERE case_id = ?').all(caseId);
+export async function getAgentOverrides(caseId) {
+    const db = await ensureDb();
+    const result = await db.execute({
+        sql: 'SELECT * FROM agent_overrides WHERE case_id = ?',
+        args: [caseId]
+    });
+    return result.rows;
 }
 
 // --- Seed demo data ---
 
-export function seedDemoData() {
-    const db = getDb();
-    const existing = db.prepare('SELECT id FROM users WHERE role = ?').get('professor');
-    if (existing) return; // Already seeded
+export async function seedDemoData() {
+    const db = await ensureDb();
+    const existing = await db.execute({ sql: "SELECT id FROM users WHERE role = 'professor' LIMIT 1", args: [] });
+    if (existing.rows.length > 0) return; // Already seeded
 
-    const prof = createUser({ name: 'Demo Professor', email: 'professor@demo.com', role: 'professor' });
+    const prof = await createUser({ name: 'Demo Professor', email: 'professor@demo.com', role: 'professor' });
 
-    const caseData = createCase({
+    const caseData = await createCase({
         title: 'Apex Health Plan (Medicare Advantage)',
         pdf_text: null,
         kpis: {
@@ -307,7 +375,7 @@ export function seedDemoData() {
         created_by: prof.id
     });
 
-    createAssignment({
+    await createAssignment({
         case_id: caseData.id,
         title: 'Spring 2026 — Apex Health Analysis',
         credits: 25,

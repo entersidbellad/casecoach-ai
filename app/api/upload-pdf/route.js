@@ -31,12 +31,12 @@ export async function POST(request) {
             }, { status: 422 });
         }
 
-        const professors = getUsersByRole('professor');
+        const professors = await getUsersByRole('professor');
         const prof = professors[0];
 
         if (caseId) {
             // Update existing case with new PDF text
-            updateCase(caseId, {
+            await updateCase(caseId, {
                 title: title || undefined,
                 pdf_text: result.text
             });
@@ -50,7 +50,7 @@ export async function POST(request) {
         }
 
         // Create new case
-        const newCase = createCase({
+        const newCase = await createCase({
             title: title.trim(),
             pdf_text: result.text,
             kpis: {},

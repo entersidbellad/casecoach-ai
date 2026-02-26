@@ -11,7 +11,7 @@ export async function GET(request) {
             return NextResponse.json({ error: 'assignment_id is required' }, { status: 400 });
         }
 
-        const messages = getMessagesByAssignment(assignment_id);
+        const messages = await getMessagesByAssignment(assignment_id);
 
         // Parse agent_trace for system messages
         const enriched = messages.map(m => ({
