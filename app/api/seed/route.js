@@ -2,8 +2,15 @@
 import { NextResponse } from 'next/server';
 import { seedDemoData, getUsersByRole, getAssignmentsByProfessor } from '@/app/lib/db';
 
-export async function POST() {
+export async function POST(request) {
     try {
+        const body = await request.json().catch(() => ({}));
+        const seedSecret = process.env.SEED_SECRET || 'casecoach-seed-2026';
+
+        if (body.secret !== seedSecret) {
+            return NextResponse.json({ error: 'Unauthorized. Provide { "secret": "..." } in the request body.' }, { status: 401 });
+        }
+
         await seedDemoData();
 
         const professors = await getUsersByRole('professor');
