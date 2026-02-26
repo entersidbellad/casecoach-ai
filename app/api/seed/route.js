@@ -22,11 +22,6 @@ export async function POST() {
         });
     } catch (err) {
         console.error('Seed error:', err);
-        return NextResponse.json({
-            error: err.message,
-            stack: err.stack?.split('\n').slice(0, 5),
-            turso_url_set: !!process.env.TURSO_DATABASE_URL,
-            turso_url_prefix: process.env.TURSO_DATABASE_URL?.substring(0, 20)
-        }, { status: 500 });
+        return NextResponse.json({ error: err.message }, { status: 500 });
     }
 }
