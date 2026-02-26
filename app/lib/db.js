@@ -1,4 +1,4 @@
-import { createClient } from '@libsql/client';
+import { createClient } from '@libsql/client/web';
 import { v4 as uuidv4 } from 'uuid';
 
 let _client = null;
