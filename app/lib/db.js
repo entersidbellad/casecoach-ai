@@ -6,10 +6,14 @@ let _client = null;
 export function getDb() {
     if (_client) return _client;
 
-    _client = createClient({
-        url: process.env.TURSO_DATABASE_URL || 'file:data/local.db',
-        authToken: process.env.TURSO_AUTH_TOKEN
-    });
+    const url = process.env.TURSO_DATABASE_URL;
+    const authToken = process.env.TURSO_AUTH_TOKEN;
+
+    if (!url) {
+        throw new Error('TURSO_DATABASE_URL environment variable is not set. Please configure it in your Vercel project settings.');
+    }
+
+    _client = createClient({ url, authToken });
 
     return _client;
 }
